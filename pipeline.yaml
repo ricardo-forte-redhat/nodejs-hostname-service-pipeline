@@ -1,0 +1,64 @@
+kind: BuildConfig
+apiVersion: v1
+metadata:
+  name: nodejs-hostname-service-pipeline
+spec:
+  strategy:
+    jenkinsPipelineStrategy:
+      jenkinsfile: |-
+        pipeline {
+          agent {
+            node {
+              label 'nodejs'
+            }
+          }
+          stages {
+            stage('Source checkout') {
+              steps {
+                git branch: 'master', url: 'https://github.com/ricardo-forte-redhat/nodejs-hostname-service.git'
+              }
+            }
+            stage('Build') {
+              steps {
+                  sh 'npm install'
+              }
+            }
+            stage('Test') {
+              steps {
+                  sh 'npm test'
+              }
+            }
+            stage('Build image') {
+              when {
+                expression {
+                  openshift.withCluster() {
+                    return !openshift.selector('bc', 'nodejs-hostname-service').exists();
+                  }
+                }
+              }
+              steps {
+                script {
+                  openshift.withCluster() {
+                    openshift.newApp('nodeshift/centos7-s2i-nodejs:latest~https://github.com/ricardo-forte-redhat/nodejs-hostname-service.git')
+                  }
+                }
+              }
+            }
+            stage('Deploy') {
+              steps {
+                script {
+                  openshift.withCluster() {
+                    openshift.withProject() {
+                      def rm = openshift.selector('dc','nodejs-hostname-service').rollout()
+                      timeout(5) {
+                        openshift.selector('dc','nodejs-hostname-service').related('pods').untilEach(1) {
+                          return (it.object().status.phase == 'Running')
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
